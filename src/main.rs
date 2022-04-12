@@ -1,4 +1,3 @@
-use std::ops::Index;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{Duration, self};
@@ -14,9 +13,6 @@ use sdl2::video::Window;
 pub fn main() -> std::io::Result<()> {
     let rom = std::path::PathBuf::from_str("res/trip8.rom").expect("rom file does not exist");
 
-    let mut emu = Chip8::new();
-    emu.load(rom)?;
-
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -31,25 +27,27 @@ pub fn main() -> std::io::Result<()> {
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
+
+    let mut emu = Chip8::new();
+    emu.load(rom)?;
+
     'running: loop {
         canvas.clear();
-        let mut keys = Vec::new();
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
-                Event::KeyDown { keycode: Some(keycode), .. } => keys.push(keycode),
+                Event::Quit {..} |
+                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    break 'running
+                },
+                Event::KeyDown { keycode: Some(keycode), .. } => emu.push_key(&keycode),
                 _ => {}
             }
         }
         // The rest of the game loop goes here...
-        emu.tick(&mut canvas, &keys);
+        emu.tick(&mut canvas);
 
         canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 500));
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 1000));
     }
 
     Ok(())
@@ -92,7 +90,6 @@ enum Instruction {
     LoadRegsFromMem(u8),
 }
 
-#[derive(Debug)]
 struct Chip8 {
     memory: [u8; 4096],
     registers: [u8; 16],
@@ -104,6 +101,7 @@ struct Chip8 {
     stack: [u16; 16],
     pixels: [bool; 64 * 32],
     last_clock: time::Instant,
+    events: Vec<u8>,
 }
 
 impl Chip8 {
@@ -131,6 +129,7 @@ impl Chip8 {
             stack: [0; 16],
             pixels: [false; (Self::ROWS * Self::COLS) as usize],
             last_clock: time::Instant::now(),
+            events: Vec::new(),
         };
 
         // Add digit sprites to memory
@@ -164,10 +163,10 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn tick(self: &mut Self, canvas: &mut Canvas<Window>, keys: &Vec<Keycode>) {
+    pub fn tick(self: &mut Self, canvas: &mut Canvas<Window>) {
         let raw_instruction = self.fetch();
         match Self::decode(raw_instruction) {
-            Some(instr) => self.execute(instr, keys),
+            Some(instr) => self.execute(instr),
             None => (),
         }
         self.render(canvas);
@@ -276,7 +275,7 @@ impl Chip8 {
         }
     }
 
-    fn execute(self: &mut Self, instruction: Instruction, keys: &Vec<Keycode>) {
+    fn execute(self: &mut Self, instruction: Instruction) {
         use Instruction::*;
 
         match instruction {
@@ -365,7 +364,7 @@ impl Chip8 {
 
                     let existing = Self::pixels_to_byte(&self.pixels[pixel_idx..pixel_idx + 8]);
 
-                    self.pixels[pixel_idx..pixel_idx + 8].clone_from_slice(&Self::byte_to_pixels(row));
+                    self.pixels[pixel_idx..pixel_idx + 8].clone_from_slice(&Self::byte_to_pixels(row^existing));
 
                     let collide = (row & existing) != 0;
                     collision = collision || collide;
@@ -374,25 +373,24 @@ impl Chip8 {
             SkipIfKey(reg) => {
                 let key_idx = self.registers[reg as usize];
                 assert!((key_idx as usize) < Self::KEYMAP.len());
-                let keycode = Self::KEYMAP[key_idx as usize];
-                if keys.contains(&keycode) {
-                    self.pc += 2;
+                if let Some(key) = self.events.pop() {
+                    self.pc += if key == key_idx { 2 } else { 0 };
                 }
             },
             SkipIfNotKey(reg) => {
                 let key_idx = self.registers[reg as usize];
                 assert!((key_idx as usize) < Self::KEYMAP.len());
-                let keycode = Self::KEYMAP[key_idx as usize];
-                if !keys.contains(&keycode) {
-                    self.pc += 2;
+                if let Some(key) = self.events.pop() {
+                    self.pc += if key != key_idx { 2 } else { 0 };
                 }
             },
             LoadDelayToReg(reg) => self.registers[reg as usize] = self.delay_timer,
             LoadKeyToReg(reg) => {
-                // TODO: this needs to pause all execution until a watched key is pressed
-                if let Some(keycode) = keys.clone().pop() {
-                    let key = Self::KEYMAP.iter().position(|&el| el == keycode).unwrap();
-                    self.registers[reg as usize] = key as u8;
+                loop {
+                    if let Some(key) = self.events.pop() {
+                        self.registers[reg as usize] = key as u8;
+                        break;
+                    }
                 }
             },
             SetDelayToReg(reg) => self.delay_timer = self.registers[reg as usize],
@@ -449,6 +447,12 @@ impl Chip8 {
         }
     }
 
+    fn push_key(self: &mut Self, keycode: &Keycode) {
+        if let Some(key) = Self::KEYMAP.iter().position(|&el| el == *keycode) {
+            self.events.push(key as u8);
+        }
+    }
+
     fn pixels_to_byte(pixels: &[bool]) -> u8 {
         let mut byte = 0;
 
@@ -483,7 +487,7 @@ mod test {
         emu.registers[0x0] = 213;
         emu.i = 0x200;
 
-        emu.execute(Instruction::StoreNumberFromRegToI(0x0), &Vec::new());
+        emu.execute(Instruction::StoreNumberFromRegToI(0x0));
 
         assert_eq!(emu.memory[0x200], 2);
         assert_eq!(emu.memory[0x201], 1);
