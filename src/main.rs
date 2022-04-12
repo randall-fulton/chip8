@@ -13,7 +13,7 @@ use sdl2::video::Window;
 pub fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 2 {
-        println!("usage: crispy romfile");
+        println!("usage: chip8 romfile");
         return Ok(())
     }
 
