@@ -11,7 +11,19 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 
 pub fn main() -> std::io::Result<()> {
-    let rom = std::path::PathBuf::from_str("res/trip8.rom").expect("rom file does not exist");
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() != 2 {
+        println!("usage: crispy romfile");
+        return Ok(())
+    }
+
+    let rom = match std::path::PathBuf::from_str(args[1].as_str()) {
+        Ok(path) => path,
+        Err(_) => {
+            println!("romfile does not exist");
+            return Ok(())
+        }
+    };
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -172,11 +184,9 @@ impl Chip8 {
         self.render(canvas);
         if self.last_clock.elapsed() > time::Duration::from_millis(16) {
             if self.delay_timer > 0 {
-                // TODO: ensure this can't happen more quickly than 60 Hz
                 self.delay_timer -= 1;
             }
             if self.sound_timer > 0 {
-                // TODO: ensure this can't happen more quickly than 60 Hz
                 self.sound_timer -= 1;
             }
             self.last_clock = time::Instant::now();
