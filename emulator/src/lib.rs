@@ -1,69 +1,12 @@
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::time::{Duration, self};
+use std::time;
 use std::fs;
 
-use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
-
-pub fn main() -> std::io::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        println!("usage: chip8 romfile");
-        return Ok(())
-    }
-
-    let rom = match std::path::PathBuf::from_str(args[1].as_str()) {
-        Ok(path) => path,
-        Err(_) => {
-            println!("romfile does not exist");
-            return Ok(())
-        }
-    };
-
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-
-    let window = video_subsystem
-        .window("rust-sdl2 demo", 640, 320)
-        .position_centered()
-        .build()
-        .unwrap();
-
-    let mut canvas = window.into_canvas().build().unwrap();
-
-    canvas.clear();
-    canvas.present();
-    let mut event_pump = sdl_context.event_pump().unwrap();
-
-    let mut emu = Chip8::new();
-    emu.load(rom)?;
-
-    'running: loop {
-        canvas.clear();
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running
-                },
-                Event::KeyDown { keycode: Some(keycode), .. } => emu.push_key(&keycode),
-                _ => {}
-            }
-        }
-        // The rest of the game loop goes here...
-        emu.tick(&mut canvas);
-
-        canvas.present();
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 1000));
-    }
-
-    Ok(())
-}
 
 enum Instruction {
     ClearDisplay,
@@ -102,7 +45,7 @@ enum Instruction {
     LoadRegsFromMem(u8),
 }
 
-struct Chip8 {
+pub struct Chip8 {
     memory: [u8; 4096],
     registers: [u8; 16],
     i: u16,
@@ -114,6 +57,24 @@ struct Chip8 {
     pixels: [bool; 64 * 32],
     last_clock: time::Instant,
     events: Vec<u8>,
+}
+
+impl Default for Chip8 {
+    fn default() -> Self {
+        Self{
+            memory: [0; 4096],
+            registers: Default::default(),
+            i: Default::default(),
+            delay_timer: Default::default(),
+            sound_timer: Default::default(),
+            pc: Default::default(),
+            sp: Default::default(),
+            stack: Default::default(),
+            pixels: [false; 64*32],
+            last_clock: time::Instant::now(),
+            events: Default::default(),
+        }
+    }
 }
 
 impl Chip8 {
@@ -130,19 +91,7 @@ impl Chip8 {
     ];
 
     pub fn new() -> Self {
-        let mut res = Chip8 {
-            memory: [0; 4096],
-            registers: [0; 16],
-            i: 0,
-            delay_timer: 0,
-            sound_timer: 0,
-            pc: 0x200,
-            sp: 0,
-            stack: [0; 16],
-            pixels: [false; (Self::ROWS * Self::COLS) as usize],
-            last_clock: time::Instant::now(),
-            events: Vec::new(),
-        };
+        let mut res = Chip8 { ..Default::default() };
 
         // Add digit sprites to memory
         res.memory[0..16 * 5].copy_from_slice(&[
@@ -167,7 +116,7 @@ impl Chip8 {
         res
     }
 
-    pub fn load(self: &mut Self, rom_path: PathBuf) -> std::io::Result<()> {
+    pub fn load(&mut self, rom_path: PathBuf) -> std::io::Result<()> {
         let contents = fs::read(rom_path)?;
 
         self.memory[0x200..0x200 + contents.len()].copy_from_slice(contents.as_slice());
@@ -175,7 +124,7 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn tick(self: &mut Self, canvas: &mut Canvas<Window>) {
+    pub fn tick(&mut self, canvas: &mut Canvas<Window>) {
         let raw_instruction = self.fetch();
         match Self::decode(raw_instruction) {
             Some(instr) => self.execute(instr),
@@ -193,7 +142,13 @@ impl Chip8 {
         }
     }
 
-    fn fetch(self: &mut Self) -> u16 {
+    pub fn push_key(&mut self, keycode: &Keycode) {
+        if let Some(key) = Self::KEYMAP.iter().position(|&el| el == *keycode) {
+            self.events.push(key as u8);
+        }
+    }
+
+    fn fetch(&mut self) -> u16 {
         let mut instruction: u16 = self.memory[self.pc] as u16;
         instruction <<= 8;
         instruction |= self.memory[self.pc + 1] as u16;
@@ -285,7 +240,7 @@ impl Chip8 {
         }
     }
 
-    fn execute(self: &mut Self, instruction: Instruction) {
+    fn execute(&mut self, instruction: Instruction) {
         use Instruction::*;
 
         match instruction {
@@ -435,7 +390,7 @@ impl Chip8 {
         }
     }
 
-    fn render(self: &mut Self, canvas: &mut Canvas<Window>) {
+    fn render(&mut self, canvas: &mut Canvas<Window>) {
         let (width, height) = canvas.output_size().unwrap();
         let pixel_width = width / Self::COLS as u32;
         let pixel_height = height / Self::ROWS as u32;
@@ -454,12 +409,6 @@ impl Chip8 {
                     pixel_height
                 )).unwrap();
             }
-        }
-    }
-
-    fn push_key(self: &mut Self, keycode: &Keycode) {
-        if let Some(key) = Self::KEYMAP.iter().position(|&el| el == *keycode) {
-            self.events.push(key as u8);
         }
     }
 
