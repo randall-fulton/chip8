@@ -36,11 +36,10 @@ pub fn main() -> std::io::Result<()> {
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let mut emu = Chip8::new();
+    let mut emu = Chip8::new(Some(canvas));
     emu.load(rom)?;
 
     'running: loop {
-        canvas.clear();
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit {..} |
@@ -52,9 +51,8 @@ pub fn main() -> std::io::Result<()> {
             }
         }
         // The rest of the game loop goes here...
-        emu.tick(&mut canvas);
+        emu.tick();
 
-        canvas.present();
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 1000));
     }
 

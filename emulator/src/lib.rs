@@ -3,15 +3,17 @@ use std::time;
 use std::fs;
 
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
-use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
 mod instruction;
+mod display;
+
 use crate::instruction::Instruction;
+use crate::display::Display;
 
 pub struct Chip8 {
+    display: Display,
     memory: [u8; 4096],
     registers: [u8; 16],
     i: u16,
@@ -20,14 +22,23 @@ pub struct Chip8 {
     pc: usize,
     sp: usize,
     stack: [u16; 16],
-    pixels: [bool; 64 * 32],
     last_clock: time::Instant,
     events: Vec<u8>,
 }
 
-impl Default for Chip8 {
-    fn default() -> Self {
-        Self{
+impl Chip8 {
+    const KEYMAP: [Keycode; 16] = [
+        Keycode::Num7, Keycode::Num8, Keycode::Num9,    // 1-3
+        Keycode::U, Keycode::I, Keycode::O,             // 4-6
+        Keycode::J, Keycode::K, Keycode::L,             // 7-9
+        Keycode::Comma, Keycode::M, Keycode::Period,    // 0-B
+        Keycode::Num0, Keycode::P, Keycode::Semicolon,  // C-E
+        Keycode::Slash,                                 // F
+    ];
+
+    pub fn new(canvas: Option<Canvas<Window>>) -> Self {
+        let mut res = Self{
+            display: Display::new(canvas),
             memory: [0; 4096],
             registers: Default::default(),
             i: Default::default(),
@@ -36,28 +47,9 @@ impl Default for Chip8 {
             pc: Default::default(),
             sp: Default::default(),
             stack: Default::default(),
-            pixels: [false; 64*32],
             last_clock: time::Instant::now(),
             events: Default::default(),
-        }
-    }
-}
-
-impl Chip8 {
-    const ROWS: u16 = 32;
-    const COLS: u16 = 64;
-
-    const KEYMAP: [Keycode; 16] = [
-        Keycode::Num6, Keycode::Num7, Keycode::Num8,    // 1-3
-        Keycode::Y, Keycode::U, Keycode::I,             // 4-6
-        Keycode::J, Keycode::K, Keycode::L,             // 7-9
-        Keycode::Comma, Keycode::M, Keycode::Period,    // 0-B
-        Keycode::Num0, Keycode::P, Keycode::Semicolon,  // C-E
-        Keycode::Slash,                                 // F
-    ];
-
-    pub fn new() -> Self {
-        let mut res = Chip8 { ..Default::default() };
+        };
 
         // Add digit sprites to memory
         res.memory[0..16 * 5].copy_from_slice(&[
@@ -90,13 +82,13 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn tick(&mut self, canvas: &mut Canvas<Window>) {
+    pub fn tick(&mut self) {
         let raw_instruction = self.fetch();
         match Self::decode(raw_instruction) {
             Some(instr) => self.execute(instr),
             None => (),
         }
-        self.render(canvas);
+        self.render();
         if self.last_clock.elapsed() > time::Duration::from_millis(16) {
             if self.delay_timer > 0 {
                 self.delay_timer -= 1;
@@ -133,7 +125,7 @@ impl Chip8 {
         use Instruction::*;
 
         match instruction {
-            ClearDisplay => self.pixels = [false; 64 * 32],
+            ClearDisplay => self.display.clear(),
             Jump(addr) => self.pc = addr as usize,
             ReturnFromSubroutine => {
                 self.pc = self.stack[self.sp] as usize;
@@ -204,25 +196,10 @@ impl Chip8 {
                 self.registers[reg as usize] = rand::random::<u8>() & val;
             }
             DrawSprite(reg_x, reg_y, size) => {
-                let x = self.registers[reg_x as usize] as usize;
-                let y = self.registers[reg_y as usize] as usize;
-
-                let mut collision = false;
-                for idx in 0..size {
-                    let row = self.memory[self.i as usize + idx as usize];
-
-                    let pixel_idx = x as usize + (Self::COLS * (y as u16 + idx as u16)) as usize;
-                    if pixel_idx + 7 > self.pixels.len() {
-                        continue
-                    }
-
-                    let existing = Self::pixels_to_byte(&self.pixels[pixel_idx..pixel_idx + 8]);
-
-                    self.pixels[pixel_idx..pixel_idx + 8].clone_from_slice(&Self::byte_to_pixels(row^existing));
-
-                    let collide = (row & existing) != 0;
-                    collision = collision || collide;
-                }
+                let x = self.registers[reg_x as usize];
+                let y = self.registers[reg_y as usize];
+                let sprite = &self.memory[self.i as usize..(self.i as usize + size as usize)];
+                self.registers[0xF] = if self.display.blit_sprite(x, y, sprite) { 1 } else { 0 }
             },
             SkipIfKey(reg) => {
                 let key_idx = self.registers[reg as usize];
@@ -279,49 +256,8 @@ impl Chip8 {
         }
     }
 
-    fn render(&mut self, canvas: &mut Canvas<Window>) {
-        let (width, height) = canvas.output_size().unwrap();
-        let pixel_width = width / Self::COLS as u32;
-        let pixel_height = height / Self::ROWS as u32;
-
-        for y in 0..Self::ROWS {
-            for x in 0..Self::COLS {
-                if self.pixels[(y * Self::COLS + x) as usize] {
-                    canvas.set_draw_color(Color::WHITE);
-                } else {
-                    canvas.set_draw_color(Color::BLACK);
-                }
-                canvas.fill_rect(Rect::new(
-                    x as i32 * pixel_width as i32,
-                    y as i32 * pixel_height as i32,
-                    pixel_width,
-                    pixel_height
-                )).unwrap();
-            }
-        }
-    }
-
-    fn pixels_to_byte(pixels: &[bool]) -> u8 {
-        let mut byte = 0;
-
-        for pixel in pixels {
-            byte <<= 1;
-            byte += if *pixel { 1 } else { 0 }
-        }
-
-        byte
-    }
-
-    fn byte_to_pixels(byte: u8) -> [bool; 8] {
-        let mut byte = byte;
-        let mut pixels = [false; 8];
-
-        for i in 0..8 {
-            pixels[7 - i] = (byte & 0x1) != 0;
-            byte >>= 1;
-        }
-
-        pixels
+    fn render(&mut self) {
+        self.display.render();
     }
 }
 
@@ -331,7 +267,7 @@ mod test {
 
     #[test]
     fn fx29() {
-        let mut emu = Chip8::new();
+        let mut emu = Chip8::new(None);
         emu.registers[0x0] = 213;
         emu.i = 0x200;
 
@@ -340,18 +276,5 @@ mod test {
         assert_eq!(emu.memory[0x200], 2);
         assert_eq!(emu.memory[0x201], 1);
         assert_eq!(emu.memory[0x202], 3);
-    }
-
-    #[test]
-    fn pixels_to_byte() {
-        let pixels = [true, false, false, true];
-
-        assert_eq!(0x9, Chip8::pixels_to_byte(&pixels));
-    }
-
-    #[test]
-    fn byte_to_pixels() {
-        let expected = [false, false, false, false, false, true, false, true];
-        assert_eq!(expected, Chip8::byte_to_pixels(0x5));
     }
 }
