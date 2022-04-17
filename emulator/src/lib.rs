@@ -8,42 +8,8 @@ use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
-enum Instruction {
-    ClearDisplay,
-    ReturnFromSubroutine,
-    Jump(u16),
-    CallSubroutine(u16),
-    SkipRegEqByte(u8, u8),
-    SkipRegNotEqByte(u8, u8),
-    SkipRegEqReg(u8, u8),
-    SetRegToByte(u8, u8),
-    AddByteToReg(u8, u8),
-    MoveValue(u8, u8),
-    OrRegs(u8, u8),
-    AndRegs(u8, u8),
-    XorRegs(u8, u8),
-    AddRegs(u8, u8),
-    SubRegs(u8, u8),
-    ShiftRight(u8),
-    ReverseSubRegs(u8, u8),
-    ShiftLeft(u8),
-    SkipRegNotEqReg(u8, u8),
-    SetI(u16),
-    JumpV0PlusByte(u16),
-    SetRegToRandPlusByte(u8, u8),
-    DrawSprite(u8, u8, u8),
-    SkipIfKey(u8),
-    SkipIfNotKey(u8),
-    LoadDelayToReg(u8),
-    LoadKeyToReg(u8),
-    SetDelayToReg(u8),
-    SetSoundToReg(u8),
-    AddRegToI(u8),
-    SetIToDigitSpriteLoc(u8),
-    StoreNumberFromRegToI(u8),
-    StoreRegsToMem(u8),
-    LoadRegsFromMem(u8),
-}
+mod instruction;
+use crate::instruction::Instruction;
 
 pub struct Chip8 {
     memory: [u8; 4096],
@@ -157,86 +123,9 @@ impl Chip8 {
     }
 
     fn decode(raw: u16) -> Option<Instruction> {
-        use Instruction::*;
-        match raw {
-            0x00E0 => Some(ClearDisplay),
-            0x00EE => Some(ReturnFromSubroutine),
-            0x1000..=0x1FFF => Some(Jump(raw & 0x0FFF)),
-            0x2000..=0x2FFF => Some(CallSubroutine(raw & 0x0FFF)),
-            0x3000..=0x3FFF => Some(SkipRegEqByte(
-                ((raw & 0x0F00) >> 8) as u8,
-                (raw & 0xFF) as u8,
-            )),
-            0x4000..=0x4FFF => Some(SkipRegNotEqByte(
-                ((raw & 0x0F00) >> 8) as u8,
-                (raw & 0xFF) as u8,
-            )),
-            0x5000..=0x5FFF => match raw & 0xF {
-                0x0 => Some(SkipRegEqReg(
-                    ((raw & 0x0F00) >> 8) as u8,
-                    ((raw & 0xF0) >> 4) as u8,
-                )),
-                _ => None,
-            },
-            0x6000..=0x6FFF => Some(SetRegToByte(
-                ((raw & 0x0F00) >> 8) as u8,
-                (raw & 0xFF) as u8,
-            )),
-            0x7000..=0x7FFF => Some(AddByteToReg(
-                ((raw & 0x0F00) >> 8) as u8,
-                (raw & 0xFF) as u8,
-            )),
-            0x8000..=0x8FFF => match raw & 0xF {
-                0x0 => Some(MoveValue(((raw & 0x0F00) >> 8) as u8, ((raw & 0xF0) >> 4) as u8)),
-                0x1 => Some(OrRegs(((raw & 0x0F00) >> 8) as u8, ((raw & 0xF0) >> 4) as u8)),
-                0x2 => Some(AndRegs(((raw & 0x0F00) >> 8) as u8, ((raw & 0xF0) >> 4) as u8)),
-                0x3 => Some(XorRegs(((raw & 0x0F00) >> 8) as u8, ((raw & 0xF0) >> 4) as u8)),
-                0x4 => Some(AddRegs(((raw & 0x0F00) >> 8) as u8, ((raw & 0xF0) >> 4) as u8)),
-                0x5 => Some(SubRegs(((raw & 0x0F00) >> 8) as u8, ((raw & 0xF0) >> 4) as u8)),
-                0x6 => Some(ShiftRight(((raw & 0x0F00) >> 8) as u8)),
-                0x7 => Some(ReverseSubRegs(
-                    ((raw & 0x0F00) >> 8) as u8,
-                    (raw & 0xFF) as u8,
-                )),
-                0xE => Some(ShiftLeft(((raw & 0x0F00) >> 8) as u8)),
-                _ => None,
-            },
-            0x9000..=0x9FFF => match raw & 0xF {
-                0x0 => Some(SkipRegNotEqReg(
-                    ((raw & 0x0F00) >> 8) as u8,
-                    ((raw & 0xF0) as u8) >> 4,
-                )),
-                _ => None,
-            },
-            0xA000..=0xAFFF => Some(SetI(raw & 0x0FFF)),
-            0xB000..=0xBFFF => Some(JumpV0PlusByte(raw & 0x0FFF)),
-            0xC000..=0xCFFF => Some(SetRegToRandPlusByte(
-                ((raw & 0x0F00) >> 8) as u8,
-                (raw & 0xFF) as u8,
-            )),
-            0xD000..=0xDFFF => Some(DrawSprite(
-                ((raw & 0x0F00) >> 8) as u8,
-                ((raw & 0xF0) >> 4) as u8,
-                (raw & 0xF) as u8,
-            )),
-            0xE000..=0xEFFF => match raw & 0xFF {
-                0x9E => Some(SkipIfKey(((raw & 0x0F00) >> 8) as u8)),
-                0xA1 => Some(SkipIfNotKey(((raw & 0x0F00) >> 8) as u8)),
-                _ => None,
-            },
-            0xF000..=0xFFFF => match raw & 0xFF {
-                0x07 => Some(LoadDelayToReg(((raw & 0x0F00) >> 8) as u8)),
-                0x0A => Some(LoadKeyToReg(((raw & 0x0F00) >> 8) as u8)),
-                0x15 => Some(SetDelayToReg(((raw & 0x0F00) >> 8) as u8)),
-                0x18 => Some(SetSoundToReg(((raw & 0x0F00) >> 8) as u8)),
-                0x1E => Some(AddRegToI(((raw & 0x0F00) >> 8) as u8)),
-                0x29 => Some(SetIToDigitSpriteLoc(((raw & 0x0F00) >> 8) as u8)),
-                0x33 => Some(StoreNumberFromRegToI(((raw & 0x0F00) >> 8) as u8)),
-                0x55 => Some(StoreRegsToMem(((raw & 0x0F00) >> 8) as u8)),
-                0x65 => Some(LoadRegsFromMem(((raw & 0x0F00) >> 8) as u8)),
-                _ => None,
-            },
-            _ => None,
+        match Instruction::try_from(raw) {
+            Ok(instr) => Some(instr),
+            Err(_) => None,
         }
     }
 
