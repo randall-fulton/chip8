@@ -16,8 +16,7 @@ fn main() {
                 egui::ColorImage::example(),
                 egui::TextureFilter::Linear,
             );
-            let mut gw = display::GameWindow::new(640, 480, target);
-            gw.render();
+            let gw = display::GameWindow::new(640, 480, target);
             Box::new(gw)
         }),
     );
