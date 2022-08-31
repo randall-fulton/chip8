@@ -58,8 +58,9 @@ pub fn main() -> std::io::Result<()> {
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
 
-    let render_target = display::SdlDisplay::new(Some(canvas));
-    let mut emu = Chip8::new(render_target);
+    let sdl_render_target = display::SdlRenderTarget::new(Some(canvas));
+    let sdl_display = emulator::display::Display::new(sdl_render_target);
+    let mut emu = Chip8::new(sdl_display);
     emu.load(rom)?;
 
     'running: loop {

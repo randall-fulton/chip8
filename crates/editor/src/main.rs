@@ -1,13 +1,25 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use eframe::egui;
+use emulator::display::Display;
+
+mod display;
 
 fn main() {
     let options = eframe::NativeOptions::default();
     eframe::run_native(
         "My egui App",
         options,
-        Box::new(|cc| Box::new(RenderTarget::new(&cc.egui_ctx))),
+        Box::new(|cc| {
+            let target = cc.egui_ctx.load_texture(
+                "render-target",
+                egui::ColorImage::example(),
+                egui::TextureFilter::Linear,
+            );
+            let mut gw = display::GameWindow::new(640, 480, target);
+            gw.render();
+            Box::new(gw)
+        }),
     );
 }
 
@@ -17,10 +29,12 @@ struct RenderTarget {
 
 impl RenderTarget {
     fn new(cc: &egui::Context) -> Self {
-        let texture = cc.load_texture("render-target", egui::ColorImage::example(), egui::TextureFilter::Linear);
-        Self{
-            texture,
-        }
+        let texture = cc.load_texture(
+            "render-target",
+            egui::ColorImage::example(),
+            egui::TextureFilter::Linear,
+        );
+        Self { texture }
     }
 }
 

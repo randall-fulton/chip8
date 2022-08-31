@@ -5,7 +5,8 @@ use std::time;
 pub mod display;
 mod instruction;
 
-use crate::display::Display;
+use display::RenderTarget;
+
 use crate::instruction::Instruction;
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -28,11 +29,9 @@ pub enum Keycode {
     F,
 }
 
-pub struct Chip8<D>
-where
-    D: Display,
+pub struct Chip8<T> where T: display::RenderTarget
 {
-    display: D,
+    display: display::Display<T>,
     memory: [u8; 4096],
     registers: [u8; 16],
     i: u16,
@@ -45,9 +44,9 @@ where
     events: Vec<u8>,
 }
 
-impl<D> Chip8<D>
+impl<T> Chip8<T>
 where
-    D: Display,
+    T: RenderTarget,
 {
     const KEYMAP: [Keycode; 16] = [
         Keycode::Num1,
@@ -68,9 +67,9 @@ where
         Keycode::F,
     ];
 
-    pub fn new(canvas: D) -> Self {
+    pub fn new(display: display::Display<T>) -> Self {
         let mut res = Self {
-            display: canvas,
+            display,
             memory: [0; 4096],
             registers: Default::default(),
             i: Default::default(),
