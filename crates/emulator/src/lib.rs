@@ -1,19 +1,38 @@
+use std::fs;
 use std::path::PathBuf;
 use std::time;
-use std::fs;
 
-use sdl2::keyboard::Keycode;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
-
+pub mod display;
 mod instruction;
-mod display;
 
-use crate::instruction::Instruction;
 use crate::display::Display;
+use crate::instruction::Instruction;
 
-pub struct Chip8 {
-    display: Display,
+#[derive(PartialEq, Debug, Copy, Clone)]
+pub enum Keycode {
+    Num1,
+    Num2,
+    Num3,
+    Num4,
+    Num5,
+    Num6,
+    Num7,
+    Num8,
+    Num9,
+    Num0,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+}
+
+pub struct Chip8<D>
+where
+    D: Display,
+{
+    display: D,
     memory: [u8; 4096],
     registers: [u8; 16],
     i: u16,
@@ -26,19 +45,32 @@ pub struct Chip8 {
     events: Vec<u8>,
 }
 
-impl Chip8 {
+impl<D> Chip8<D>
+where
+    D: Display,
+{
     const KEYMAP: [Keycode; 16] = [
-        Keycode::Num7, Keycode::Num8, Keycode::Num9,    // 1-3
-        Keycode::U, Keycode::I, Keycode::O,             // 4-6
-        Keycode::J, Keycode::K, Keycode::L,             // 7-9
-        Keycode::Comma, Keycode::M, Keycode::Period,    // 0-B
-        Keycode::Num0, Keycode::P, Keycode::Semicolon,  // C-E
-        Keycode::Slash,                                 // F
+        Keycode::Num1,
+        Keycode::Num2,
+        Keycode::Num3,
+        Keycode::Num4,
+        Keycode::Num5,
+        Keycode::Num6,
+        Keycode::Num7,
+        Keycode::Num8,
+        Keycode::Num9,
+        Keycode::Num0,
+        Keycode::A,
+        Keycode::B,
+        Keycode::C,
+        Keycode::D,
+        Keycode::E,
+        Keycode::F,
     ];
 
-    pub fn new(canvas: Option<Canvas<Window>>) -> Self {
-        let mut res = Self{
-            display: Display::new(canvas),
+    pub fn new(canvas: D) -> Self {
+        let mut res = Self {
+            display: canvas,
             memory: [0; 4096],
             registers: Default::default(),
             i: Default::default(),
@@ -152,7 +184,9 @@ impl Chip8 {
                 }
             }
             SetRegToByte(reg, val) => self.registers[reg as usize] = val,
-            AddByteToReg(reg, val) => self.registers[reg as usize] = self.registers[reg as usize].wrapping_add(val),
+            AddByteToReg(reg, val) => {
+                self.registers[reg as usize] = self.registers[reg as usize].wrapping_add(val)
+            }
             MoveValue(reg1, reg2) => self.registers[reg1 as usize] = self.registers[reg2 as usize],
             OrRegs(reg1, reg2) => self.registers[reg1 as usize] |= self.registers[reg2 as usize],
             AndRegs(reg1, reg2) => self.registers[reg1 as usize] &= self.registers[reg2 as usize],
@@ -199,29 +233,31 @@ impl Chip8 {
                 let x = self.registers[reg_x as usize];
                 let y = self.registers[reg_y as usize];
                 let sprite = &self.memory[self.i as usize..(self.i as usize + size as usize)];
-                self.registers[0xF] = if self.display.blit_sprite(x, y, sprite) { 1 } else { 0 }
-            },
+                self.registers[0xF] = if self.display.blit_sprite(x, y, sprite) {
+                    1
+                } else {
+                    0
+                }
+            }
             SkipIfKey(reg) => {
                 let key_idx = self.registers[reg as usize];
                 assert!((key_idx as usize) < Self::KEYMAP.len());
                 if let Some(key) = self.events.pop() {
                     self.pc += if key == key_idx { 2 } else { 0 };
                 }
-            },
+            }
             SkipIfNotKey(reg) => {
                 let key_idx = self.registers[reg as usize];
                 assert!((key_idx as usize) < Self::KEYMAP.len());
                 if let Some(key) = self.events.pop() {
                     self.pc += if key != key_idx { 2 } else { 0 };
                 }
-            },
+            }
             LoadDelayToReg(reg) => self.registers[reg as usize] = self.delay_timer,
-            LoadKeyToReg(reg) => {
-                loop {
-                    if let Some(key) = self.events.pop() {
-                        self.registers[reg as usize] = key as u8;
-                        break;
-                    }
+            LoadKeyToReg(reg) => loop {
+                if let Some(key) = self.events.pop() {
+                    self.registers[reg as usize] = key as u8;
+                    break;
                 }
             },
             SetDelayToReg(reg) => self.delay_timer = self.registers[reg as usize],
@@ -229,7 +265,7 @@ impl Chip8 {
             AddRegToI(reg) => self.i += self.registers[reg as usize] as u16,
             SetIToDigitSpriteLoc(reg) => {
                 self.i = self.registers[reg as usize] as u16 * 5;
-            },
+            }
             StoreNumberFromRegToI(reg) => {
                 let val = self.registers[reg as usize];
                 let hundreds = val / 100;
@@ -239,12 +275,12 @@ impl Chip8 {
                 self.memory[self.i as usize] = hundreds;
                 self.memory[self.i as usize + 1] = tens;
                 self.memory[self.i as usize + 2] = ones;
-            },
+            }
             StoreRegsToMem(max_reg) => {
                 for (reg, val) in self.registers[0..=(max_reg as usize)].iter().enumerate() {
                     self.memory[self.i as usize + reg] = *val;
                 }
-            },
+            }
             LoadRegsFromMem(max_reg) => {
                 for (reg, val) in self.registers[0..=(max_reg as usize)]
                     .iter_mut()
@@ -252,29 +288,11 @@ impl Chip8 {
                 {
                     *val = self.memory[self.i as usize + reg] as u8;
                 }
-            },
+            }
         }
     }
 
     fn render(&mut self) {
         self.display.render();
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn fx29() {
-        let mut emu = Chip8::new(None);
-        emu.registers[0x0] = 213;
-        emu.i = 0x200;
-
-        emu.execute(Instruction::StoreNumberFromRegToI(0x0));
-
-        assert_eq!(emu.memory[0x200], 2);
-        assert_eq!(emu.memory[0x201], 1);
-        assert_eq!(emu.memory[0x202], 3);
     }
 }

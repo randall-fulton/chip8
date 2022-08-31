@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
-	"cli",
-	"emulator",
+	"crates/cli",
+	"crates/editor",
+	"crates/emulator",
 ]
