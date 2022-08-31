@@ -53,7 +53,7 @@ pub fn main() -> std::io::Result<()> {
         // The rest of the game loop goes here...
         emu.tick();
 
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 1000));
+        ::std::thread::sleep(Duration::from_millis(16));
     }
 
     Ok(())
