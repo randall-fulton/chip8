@@ -31,7 +31,7 @@ pub enum Keycode {
 
 pub struct Chip8<T> where T: display::RenderTarget
 {
-    display: display::Display<T>,
+    pub display: display::Display<T>,
     memory: [u8; 4096],
     registers: [u8; 16],
     i: u16,

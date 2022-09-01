@@ -14,7 +14,7 @@ pub struct Display<T>
 where
     T: RenderTarget,
 {
-    target: T,
+    pub target: T,
     pixels: [bool; 64 * 32],
 }
 
