@@ -1,7 +1,35 @@
-use std::sync::{Arc, Mutex};
+use std::fmt;
 
 use eframe::egui;
 use emulator::display;
+use tokio::sync::{mpsc, oneshot};
+
+pub(crate) enum RenderTargetEditorRequest {
+    DumpActiveBuffer(
+        oneshot::Sender<RenderTargetEditorResponse>,
+        egui::TextureHandle,
+    ),
+}
+
+impl fmt::Debug for RenderTargetEditorRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RenderTargetEditorRequest::DumpActiveBuffer(_, _) => write!(f, "DumpActiveBuffer"),
+        }
+    }
+}
+
+pub(crate) enum RenderTargetEditorResponse {
+    DumpActiveBuffer(egui::TextureHandle),
+}
+
+impl fmt::Debug for RenderTargetEditorResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RenderTargetEditorResponse::DumpActiveBuffer(_) => write!(f, "DumpActiveBuffer"),
+        }
+    }
+}
 
 type Buffer = image::ImageBuffer<image::Rgba<u8>, Vec<u8>>;
 
@@ -10,20 +38,26 @@ pub(crate) struct RenderTarget {
     h: usize,
     active_buffer: usize,
     buffers: [Buffer; 2],
+    rx: mpsc::Receiver<RenderTargetEditorRequest>,
 }
 
 impl RenderTarget {
-    pub(crate) fn new(width: usize, height: usize) -> Self {
+    pub(crate) fn new(
+        width: usize,
+        height: usize,
+        rx: mpsc::Receiver<RenderTargetEditorRequest>,
+    ) -> Self {
         let buffer = image::RgbaImage::new(width as u32, height as u32);
         Self {
             w: width,
             h: height,
             active_buffer: 0,
             buffers: [buffer.clone(), buffer],
+            rx,
         }
     }
 
-    pub(crate) fn get_active_buffer(&self) -> &Buffer {
+    pub fn get_active_buffer(&self) -> &Buffer {
         assert!(
             self.active_buffer <= 1,
             "targeting more than two render buffers is invalid"
@@ -38,6 +72,27 @@ impl RenderTarget {
         );
         let index = if self.active_buffer == 0 { 1 } else { 0 };
         &mut self.buffers[index]
+    }
+
+    pub(crate) fn tick(&mut self) {
+        let req = match self.rx.try_recv() {
+            Ok(v) => v,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                eprintln!("RenderTarget receive channel is dead");
+                return;
+            }
+        };
+        let RenderTargetEditorRequest::DumpActiveBuffer(tx, mut texture) = req;
+        let buf = self.get_active_buffer();
+        let pixels = buf.clone().into_flat_samples();
+        let img = egui::ImageData::Color(egui::ColorImage::from_rgba_unmultiplied(
+            [self.w, self.h],
+            pixels.as_slice(),
+        ));
+        texture.set(img, egui::TextureFilter::Linear);
+        tx.send(RenderTargetEditorResponse::DumpActiveBuffer(texture))
+            .expect("unable to send texture back to editor");
     }
 }
 
@@ -70,22 +125,22 @@ impl display::RenderTarget for RenderTarget {
 pub(crate) struct GameWindow {
     w: usize,
     h: usize,
-    emulator: Arc<Mutex<emulator::Chip8<RenderTarget>>>,
     texture: egui::TextureHandle,
+    tx: mpsc::Sender<RenderTargetEditorRequest>,
 }
 
 impl GameWindow {
     pub(crate) fn new(
         width: usize,
         height: usize,
-        emulator: Arc<Mutex<emulator::Chip8<RenderTarget>>>,
         target: egui::TextureHandle,
+        tx: mpsc::Sender<RenderTargetEditorRequest>,
     ) -> Self {
         Self {
             w: width,
             h: height,
-            emulator,
             texture: target,
+            tx,
         }
     }
 }
@@ -93,18 +148,14 @@ impl GameWindow {
 impl eframe::App for GameWindow {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let buf: Buffer;
-            { // ensure the lock is released ASAP so emulator can keep chugging along
-                let emu = self
-                    .emulator
-                    .lock()
-                    .expect("failed to obtain lock in GameWindow");
-                buf = emu.display.target.get_active_buffer().clone();
-            }
-            let pixels = buf.as_flat_samples();
-            let img = egui::ColorImage::from_rgba_unmultiplied([self.w, self.h], pixels.as_slice());
-            // let img = egui::ColorImage::new([self.w, self.h], egui::Color32::WHITE);
-            self.texture.set(img, egui::TextureFilter::Linear);
+            let (tx, rx) = oneshot::channel();
+            let texture = self.texture.clone();
+            self.tx
+                .blocking_send(RenderTargetEditorRequest::DumpActiveBuffer(tx, texture))
+                .unwrap();
+
+            let RenderTargetEditorResponse::DumpActiveBuffer(texture) = rx.blocking_recv().unwrap();
+            self.texture = texture;
             ui.image(&self.texture, self.texture.size_vec2());
         });
     }
