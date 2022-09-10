@@ -9,6 +9,8 @@ use emulator::Chip8;
 
 mod display;
 
+const CLOCK_RATE: u64 = 500_000_000; // in Hertz
+
 pub fn main() -> std::io::Result<()> {
     let keymap: HashMap<Keycode, emulator::Keycode> = HashMap::from([
         (Keycode::Num7, emulator::Keycode::Num1),
@@ -85,7 +87,7 @@ pub fn main() -> std::io::Result<()> {
         // The rest of the game loop goes here...
         emu.tick();
 
-        ::std::thread::sleep(Duration::from_millis(16));
+        ::std::thread::sleep(Duration::from_nanos(1_000_000_000 / CLOCK_RATE));
     }
 
     Ok(())
