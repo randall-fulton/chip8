@@ -1,9 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use std::{
-    str::FromStr,
-    time::Duration,
-};
+use std::{str::FromStr, time::Duration};
 
 use eframe::egui;
 use tokio::runtime::Runtime;
@@ -38,7 +35,7 @@ fn main() {
 
             let (render_tx, render_rx) =
                 tokio::sync::mpsc::channel::<display::RenderTargetEditorRequest>(10);
-            let rt = display::RenderTarget::new(WIDTH, HEIGHT, render_rx);
+            let rt = display::RenderTarget::new(WIDTH, HEIGHT, cc.egui_ctx.clone(), render_rx);
 
             let mut emu = emulator::Chip8::new(emulator::display::Display::new(rt));
             emu.load(std::path::PathBuf::from_str(".\\res\\Maze.ch8").unwrap())
@@ -49,8 +46,6 @@ fn main() {
                 loop {
                     emu.tick();
                     emu.display.target.tick(); // NOTE: this hacky af
-                    // egui_ctx.request_repaint();
-                    // ::std::thread::sleep(Duration::from_millis(16));
                 }
             });
 

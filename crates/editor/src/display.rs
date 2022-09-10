@@ -1,43 +1,20 @@
-use std::fmt;
-
 use eframe::egui;
 use emulator::display;
 use tokio::sync::{mpsc, oneshot};
 
-pub(crate) enum RenderTargetEditorRequest {
-    DumpActiveBuffer(
-        oneshot::Sender<RenderTargetEditorResponse>,
-        egui::TextureHandle,
-    ),
-}
-
-impl fmt::Debug for RenderTargetEditorRequest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RenderTargetEditorRequest::DumpActiveBuffer(_, _) => write!(f, "DumpActiveBuffer"),
-        }
-    }
-}
-
-pub(crate) enum RenderTargetEditorResponse {
-    DumpActiveBuffer(egui::TextureHandle),
-}
-
-impl fmt::Debug for RenderTargetEditorResponse {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RenderTargetEditorResponse::DumpActiveBuffer(_) => write!(f, "DumpActiveBuffer"),
-        }
-    }
-}
-
 type Buffer = image::ImageBuffer<image::Rgba<u8>, Vec<u8>>;
+
+#[derive(Debug)]
+pub(crate) enum RenderTargetEditorRequest {
+    DumpActiveBuffer(oneshot::Sender<Buffer>),
+}
 
 pub(crate) struct RenderTarget {
     w: usize,
     h: usize,
     active_buffer: usize,
     buffers: [Buffer; 2],
+    egui_ctx: egui::Context,
     rx: mpsc::Receiver<RenderTargetEditorRequest>,
 }
 
@@ -45,6 +22,7 @@ impl RenderTarget {
     pub(crate) fn new(
         width: usize,
         height: usize,
+        egui_ctx: egui::Context,
         rx: mpsc::Receiver<RenderTargetEditorRequest>,
     ) -> Self {
         let buffer = image::RgbaImage::new(width as u32, height as u32);
@@ -53,6 +31,7 @@ impl RenderTarget {
             h: height,
             active_buffer: 0,
             buffers: [buffer.clone(), buffer],
+            egui_ctx,
             rx,
         }
     }
@@ -83,16 +62,9 @@ impl RenderTarget {
                 return;
             }
         };
-        let RenderTargetEditorRequest::DumpActiveBuffer(tx, mut texture) = req;
-        let buf = self.get_active_buffer();
-        let pixels = buf.clone().into_flat_samples();
-        let img = egui::ImageData::Color(egui::ColorImage::from_rgba_unmultiplied(
-            [self.w, self.h],
-            pixels.as_slice(),
-        ));
-        texture.set(img, egui::TextureFilter::Linear);
-        tx.send(RenderTargetEditorResponse::DumpActiveBuffer(texture))
-            .expect("unable to send texture back to editor");
+        let RenderTargetEditorRequest::DumpActiveBuffer(tx) = req;
+        tx.send(self.get_active_buffer().clone()).unwrap();
+        self.egui_ctx.request_repaint();
     }
 }
 
@@ -125,6 +97,7 @@ impl display::RenderTarget for RenderTarget {
 pub(crate) struct GameWindow {
     w: usize,
     h: usize,
+    buffer: Buffer,
     texture: egui::TextureHandle,
     tx: mpsc::Sender<RenderTargetEditorRequest>,
 }
@@ -139,6 +112,7 @@ impl GameWindow {
         Self {
             w: width,
             h: height,
+            buffer: Default::default(),
             texture: target,
             tx,
         }
@@ -149,13 +123,18 @@ impl eframe::App for GameWindow {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             let (tx, rx) = oneshot::channel();
-            let texture = self.texture.clone();
             self.tx
-                .blocking_send(RenderTargetEditorRequest::DumpActiveBuffer(tx, texture))
+                .blocking_send(RenderTargetEditorRequest::DumpActiveBuffer(tx))
                 .unwrap();
 
-            let RenderTargetEditorResponse::DumpActiveBuffer(texture) = rx.blocking_recv().unwrap();
-            self.texture = texture;
+            self.buffer = rx.blocking_recv().unwrap();
+            let pixels = self.buffer.clone().into_flat_samples();
+            let img = egui::ImageData::Color(egui::ColorImage::from_rgba_unmultiplied(
+                [self.w, self.h],
+                pixels.as_slice(),
+            ));
+
+            self.texture.set(img, egui::TextureFilter::Linear);
             ui.image(&self.texture, self.texture.size_vec2());
         });
     }
